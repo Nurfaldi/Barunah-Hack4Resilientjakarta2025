@@ -1,0 +1,17 @@
+numpy
+pandas
+matplotlib
+seaborn
+geopandas
+shapely
+pyproj
+contextily
+mercantile
+tqdm
+scipy
+scikit-learn
+gspread
+gspread-dataframe
+python-dotenv
+google-cloud-bigquery
+google-auth
