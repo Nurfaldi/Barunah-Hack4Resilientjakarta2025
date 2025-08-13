@@ -40,10 +40,14 @@ class JakartaDataExplorer:
         """Initialize the explorer with base data path."""
         self.base_path = Path(base_path)
         self.extracted_data_path = self.base_path / "data" / "extracted_data"
+        self.metadata_path = self.base_path / "data" / "metadata"
         self.output_path = self.base_path / "data" / "visualizations"
         
-        # Create output directory
-        self.output_path.mkdir(parents=True, exist_ok=True)
+        # Create organized output directories
+        self.raw_output_path = self.output_path / "raw_data"
+        self.processed_output_path = self.output_path / "processed_data"
+        self.raw_output_path.mkdir(parents=True, exist_ok=True)
+        self.processed_output_path.mkdir(parents=True, exist_ok=True)
         
         # Jakarta boundaries for context
         self.jakarta_boundaries = None
@@ -54,10 +58,67 @@ class JakartaDataExplorer:
         self.raster_datasets = defaultdict(dict)
         self.tabular_datasets = defaultdict(dict)
         
+        # Metadata for enhanced processing
+        self.metadata = self._load_metadata()
+        
         print(f"🏢 Jakarta Data Explorer initialized")
         print(f"📁 Base path: {self.base_path}")
         print(f"📊 Data path: {self.extracted_data_path}")
-        print(f"🎨 Output path: {self.output_path}")
+        print(f"🎨 Raw output: {self.raw_output_path}")
+        print(f"🔄 Processed output: {self.processed_output_path}")
+        print(f"📋 Metadata loaded: {len(self.metadata.get('datasources', {}))} datasources")
+    
+    def _load_metadata(self) -> Dict:
+        """Load metadata files for enhanced data processing."""
+        metadata = {'datasources': {}, 'flooding_mapping': {}, 'neighborhood_columns': {}}
+        
+        try:
+            # Load datasource list
+            datasource_file = self.metadata_path / "Barunah Data Governance Datasource List.csv"
+            if datasource_file.exists():
+                df = pd.read_csv(datasource_file)
+                for _, row in df.iterrows():
+                    metadata['datasources'][row['Index']] = {
+                        'title': row['Title'],
+                        'description': row['Description'],
+                        'data_type': row['Data Type'],
+                        'sources': row['Sources']
+                    }
+            
+            # Load flooding mapping
+            flooding_file = self.metadata_path / "Barunah Data Governance Flooding Mapping.csv"
+            if flooding_file.exists():
+                df = pd.read_csv(flooding_file)
+                for _, row in df.iterrows():
+                    metadata['flooding_mapping'][row['Indicator']] = {
+                        'domain': row['Domain'],
+                        'dimension': row['Dimension'],
+                        'rationale': row['Rationale'],
+                        'availability': row['Data Availability']
+                    }
+            
+            # Load neighborhood metadata
+            neighborhood_file = self.metadata_path / "Barunah Data Governance Neighborhood Metadata.csv"
+            if neighborhood_file.exists():
+                df = pd.read_csv(neighborhood_file)
+                for _, row in df.iterrows():
+                    metadata['neighborhood_columns'][row['Column Name']] = {
+                        'full_name': row['Full Name'],
+                        'category': row['Data Categories'],
+                        'type': row['Type'],
+                        'description': row['Description'],
+                        'year_start': row['Year Start'],
+                        'year_end': row['Year End']
+                    }
+                    
+            print(f"📋 Loaded {len(metadata['datasources'])} datasources, "
+                  f"{len(metadata['flooding_mapping'])} flood indicators, "
+                  f"{len(metadata['neighborhood_columns'])} column definitions")
+                  
+        except Exception as e:
+            print(f"⚠️  Warning: Could not fully load metadata: {e}")
+            
+        return metadata
         
     def load_jakarta_boundaries(self) -> bool:
         """Load Jakarta administrative boundaries for context."""
@@ -277,8 +338,8 @@ class JakartaDataExplorer:
             return 'mixed'
     
     def create_folder_separated_vector_visualizations(self):
-        """Create separate visualizations for each folder containing vector datasets."""
-        print(f"\n🎨 CREATING FOLDER-SEPARATED VECTOR VISUALIZATIONS...")
+        """Create separate visualizations for each folder containing vector datasets with batch processing."""
+        print(f"\n🎨 CREATING FOLDER-SEPARATED VECTOR VISUALIZATIONS (RAW DATA)...")
         print("=" * 60)
         
         if not self.vector_datasets:
@@ -295,86 +356,201 @@ class JakartaDataExplorer:
             'mixed': '#96ceb4'
         }
         
-        # Process each folder separately
+        # Process each folder separately with batch support (max 20 visualizations per image)
         for folder_name, datasets in tqdm(self.vector_datasets.items(), desc="Creating folder visualizations"):
             print(f"\n📁 Processing folder: {folder_name} ({len(datasets)} datasets)")
             
-            # Calculate grid layout
-            n_datasets = len(datasets)
-            n_cols = min(4, n_datasets)  # Max 4 columns
-            n_rows = (n_datasets + n_cols - 1) // n_cols
-            
-            # Create figure
-            fig_width = n_cols * 5
-            fig_height = n_rows * 4
-            fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height))
-            
-            # Always ensure axes is a 2D array for consistent indexing
-            if n_datasets == 1:
-                axes = np.array([[axes]])
-            elif n_rows == 1 and n_cols > 1:
-                axes = axes.reshape(1, -1)
-            elif n_rows > 1 and n_cols == 1:
-                axes = axes.reshape(-1, 1)
-            
-            # Plot each dataset
-            for i, (dataset_name, info) in enumerate(datasets.items()):
-                row = i // n_cols
-                col = i % n_cols
-                
-                # Now axes is always 2D, so we can use consistent indexing
-                ax = axes[row, col]
-                
-                try:
-                    self._plot_vector_dataset(ax, info, colors)
-                    
-                    # Add dataset info
-                    title = f"{dataset_name}\n({info['geometry_type']}, {info['feature_count']:,} features)"
-                    ax.set_title(title, fontsize=9, pad=10)
-                    
-                except Exception as e:
-                    ax.text(0.5, 0.5, f"Error plotting\n{dataset_name}\n{str(e)[:50]}...", 
-                           ha='center', va='center', transform=ax.transAxes)
-                
-                ax.set_xlabel('Longitude', fontsize=8)
-                ax.set_ylabel('Latitude', fontsize=8) 
-                ax.tick_params(labelsize=6)
-            
-            # Hide unused subplots
-            for i in range(n_datasets, n_rows * n_cols):
-                row = i // n_cols
-                col = i % n_cols
-                
-                # Now axes is always 2D, so we can use consistent indexing
-                try:
-                    axes[row, col].set_visible(False)
-                except (IndexError, AttributeError):
-                    continue  # Skip if subplot doesn't exist
-            
-            # Add legend
-            legend_elements = [mpatches.Patch(color=color, label=geom_type.title()) 
-                              for geom_type, color in colors.items()]
-            fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
-            
-            # Clean folder name for file
+            # Clean folder name for file system
             clean_folder_name = folder_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
-            plt.suptitle(f'Jakarta Data Explorer - {folder_name} Vector Datasets', fontsize=14, y=0.98)
-            plt.tight_layout()
+            folder_output_path = self.raw_output_path / clean_folder_name
+            folder_output_path.mkdir(parents=True, exist_ok=True)
             
-            # Save the plot
-            output_file = self.output_path / f'vector_{clean_folder_name}.png'
-            plt.savefig(output_file, dpi=300, bbox_inches='tight')
-            plt.close(fig)  # Close to free memory
+            # Split datasets into batches of 20 for manageable file sizes
+            dataset_items = list(datasets.items())
+            batch_size = 20
+            batches = [dataset_items[i:i + batch_size] for i in range(0, len(dataset_items), batch_size)]
             
-            output_files.append(output_file)
-            print(f"✅ Saved visualization for {folder_name}: {output_file}")
+            for batch_idx, batch_datasets in enumerate(batches):
+                batch_name = f"batch_{batch_idx + 1}" if len(batches) > 1 else "all"
+                output_file = folder_output_path / f'vector_{clean_folder_name}_{batch_name}.png'
+                
+                if output_file.exists():
+                    print(f"⏭️  Skipping {folder_name} batch {batch_idx + 1}: visualization already exists")
+                    output_files.append(output_file)
+                    continue
+                
+                # Calculate grid layout for this batch
+                n_datasets = len(batch_datasets)
+                n_cols = min(4, n_datasets)  # Max 4 columns
+                n_rows = (n_datasets + n_cols - 1) // n_cols
+                
+                # Create figure
+                fig_width = n_cols * 5
+                fig_height = n_rows * 4
+                fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height))
+                
+                # Always ensure axes is a 2D array for consistent indexing
+                if n_datasets == 1:
+                    axes = np.array([[axes]])
+                elif n_rows == 1 and n_cols > 1:
+                    axes = axes.reshape(1, -1)
+                elif n_rows > 1 and n_cols == 1:
+                    axes = axes.reshape(-1, 1)
+                
+                # Plot each dataset in this batch
+                for i, (dataset_name, info) in enumerate(batch_datasets):
+                    row = i // n_cols
+                    col = i % n_cols
+                    
+                    # Now axes is always 2D, so we can use consistent indexing
+                    ax = axes[row, col]
+                    
+                    try:
+                        self._plot_vector_dataset(ax, info, colors)
+                        
+                        # Add dataset info
+                        title = f"{dataset_name}\n({info['geometry_type']}, {info['feature_count']:,} features)"
+                        ax.set_title(title, fontsize=9, pad=10)
+                        
+                    except Exception as e:
+                        ax.text(0.5, 0.5, f"Error plotting\n{dataset_name}\n{str(e)[:50]}...", 
+                               ha='center', va='center', transform=ax.transAxes)
+                    
+                    ax.set_xlabel('Longitude', fontsize=8)
+                    ax.set_ylabel('Latitude', fontsize=8) 
+                    ax.tick_params(labelsize=6)
+                
+                # Hide unused subplots in this batch
+                for i in range(n_datasets, n_rows * n_cols):
+                    row = i // n_cols
+                    col = i % n_cols
+                    
+                    # Now axes is always 2D, so we can use consistent indexing
+                    try:
+                        axes[row, col].set_visible(False)
+                    except (IndexError, AttributeError):
+                        continue  # Skip if subplot doesn't exist
+                
+                # Add legend for this batch
+                legend_elements = [mpatches.Patch(color=color, label=geom_type.title()) 
+                                  for geom_type, color in colors.items()]
+                fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
+                
+                # Add batch info to title
+                batch_info = f" - Batch {batch_idx + 1}/{len(batches)}" if len(batches) > 1 else ""
+                plt.suptitle(f'Jakarta Raw Vector Data - {folder_name}{batch_info}', fontsize=14, y=0.98)
+                plt.tight_layout()
+                
+                # Save the plot
+                plt.savefig(output_file, dpi=300, bbox_inches='tight')
+                plt.close(fig)  # Close to free memory
+                
+                output_files.append(output_file)
+                print(f"✅ Saved batch {batch_idx + 1}/{len(batches)} for {folder_name}: {output_file}")
         
         print(f"\n✅ All vector visualizations completed: {len(output_files)} files saved")
         return output_files
     
+    def create_folder_separated_raster_visualizations(self):
+        """Create separate visualizations for each folder containing raster datasets with batch processing."""
+        print(f"\n🌍 CREATING FOLDER-SEPARATED RASTER VISUALIZATIONS (RAW DATA)...")
+        print("=" * 60)
+        
+        if not self.raster_datasets:
+            print("⚠️  No raster datasets to visualize")
+            return []
+        
+        output_files = []
+        
+        # Process each folder separately with batch support (max 20 visualizations per image)
+        for folder_name, datasets in tqdm(self.raster_datasets.items(), desc="Creating raster visualizations"):
+            print(f"\n📁 Processing folder: {folder_name} ({len(datasets)} datasets)")
+            
+            # Clean folder name for file system
+            clean_folder_name = folder_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
+            folder_output_path = self.raw_output_path / clean_folder_name
+            folder_output_path.mkdir(parents=True, exist_ok=True)
+            
+            # Split datasets into batches of 20 for manageable file sizes
+            dataset_items = list(datasets.items())
+            batch_size = 20
+            batches = [dataset_items[i:i + batch_size] for i in range(0, len(dataset_items), batch_size)]
+            
+            for batch_idx, batch_datasets in enumerate(batches):
+                batch_name = f"batch_{batch_idx + 1}" if len(batches) > 1 else "all"
+                output_file = folder_output_path / f'raster_{clean_folder_name}_{batch_name}.png'
+                
+                if output_file.exists():
+                    print(f"⏭️  Skipping {folder_name} batch {batch_idx + 1}: visualization already exists")
+                    output_files.append(output_file)
+                    continue
+                
+                # Calculate grid layout for this batch
+                n_datasets = len(batch_datasets)
+                n_cols = min(4, n_datasets)  # Max 4 columns
+                n_rows = (n_datasets + n_cols - 1) // n_cols
+                
+                # Create figure
+                fig_width = n_cols * 5
+                fig_height = n_rows * 4
+                fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height))
+                
+                # Always ensure axes is a 2D array for consistent indexing
+                if n_datasets == 1:
+                    axes = np.array([[axes]])
+                elif n_rows == 1 and n_cols > 1:
+                    axes = axes.reshape(1, -1)
+                elif n_rows > 1 and n_cols == 1:
+                    axes = axes.reshape(-1, 1)
+                
+                # Plot each raster dataset in this batch
+                for i, (dataset_name, info) in enumerate(batch_datasets):
+                    row = i // n_cols
+                    col = i % n_cols
+                    
+                    ax = axes[row, col]
+                    
+                    try:
+                        self._plot_raster_dataset(ax, info)
+                        
+                        # Add dataset info
+                        title = f"{dataset_name}\n({info['width']}x{info['height']}, {info['bands']} bands)"
+                        ax.set_title(title, fontsize=9, pad=10)
+                        
+                    except Exception as e:
+                        ax.text(0.5, 0.5, f"Error plotting\n{dataset_name}\n{str(e)[:50]}...", 
+                               ha='center', va='center', transform=ax.transAxes)
+                    
+                    ax.tick_params(labelsize=6)
+                
+                # Hide unused subplots in this batch
+                for i in range(n_datasets, n_rows * n_cols):
+                    row = i // n_cols
+                    col = i % n_cols
+                    
+                    try:
+                        axes[row, col].set_visible(False)
+                    except (IndexError, AttributeError):
+                        continue
+                
+                # Add batch info to title
+                batch_info = f" - Batch {batch_idx + 1}/{len(batches)}" if len(batches) > 1 else ""
+                plt.suptitle(f'Jakarta Raw Raster Data - {folder_name}{batch_info}', fontsize=14, y=0.98)
+                plt.tight_layout()
+                
+                # Save the plot
+                plt.savefig(output_file, dpi=300, bbox_inches='tight')
+                plt.close(fig)
+                
+                output_files.append(output_file)
+                print(f"✅ Saved raster batch {batch_idx + 1}/{len(batches)} for {folder_name}: {output_file}")
+        
+        print(f"\n✅ All raster visualizations completed: {len(output_files)} files saved")
+        return output_files
+    
     def create_comprehensive_tabular_visualizations(self):
-        """Create comprehensive visualizations for ALL columns in tabular datasets."""
-        print(f"\n📊 CREATING COMPREHENSIVE TABULAR VISUALIZATIONS...")
+        """Create comprehensive visualizations for ALL columns in tabular datasets with organized structure."""
+        print(f"\n📊 CREATING COMPREHENSIVE TABULAR VISUALIZATIONS (RAW DATA)...")
         print("=" * 60)
         
         if not self.tabular_datasets:
@@ -389,6 +565,18 @@ class JakartaDataExplorer:
             
             for dataset_name, info in datasets.items():
                 try:
+                    # Check if visualization already exists - organize in raw data structure
+                    clean_folder_name = folder_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
+                    clean_dataset_name = dataset_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
+                    folder_output_path = self.raw_output_path / clean_folder_name
+                    folder_output_path.mkdir(parents=True, exist_ok=True)
+                    output_file = folder_output_path / f'tabular_{clean_dataset_name}.png'
+                    
+                    if output_file.exists():
+                        print(f"⏭️  Skipping {folder_name}/{dataset_name}: visualization already exists")
+                        output_files.append(output_file)
+                        continue
+                    
                     df = info['data']
                     numeric_cols = info['numeric_columns']
                     categorical_cols = info['categorical_columns']
@@ -485,17 +673,12 @@ class JakartaDataExplorer:
                         elif i < len(axes):
                             axes[col_idx].set_visible(False)
                     
-                    # Clean names for file
-                    clean_folder_name = folder_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
-                    clean_dataset_name = dataset_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
-                    
                     plt.suptitle(f'Tabular Data Explorer - {folder_name}/{dataset_name}\n'
                                f'({info["rows"]:,} rows, {len(info["columns"])} columns)', 
                                fontsize=12, y=0.98)
                     plt.tight_layout()
                     
-                    # Save the plot
-                    output_file = self.output_path / f'tabular_{clean_folder_name}_{clean_dataset_name}.png'
+                    # Save the plot (output_file already defined above)
                     plt.savefig(output_file, dpi=300, bbox_inches='tight')
                     plt.close(fig)
                     
@@ -708,6 +891,337 @@ class JakartaDataExplorer:
         
         print(f"✅ Summary dashboard saved to: {output_file}")
     
+    def discover_processed_datasets(self) -> Dict[str, Dict]:
+        """Discover and analyze processed datasets for analytical visualization."""
+        print("\n🔄 DISCOVERING PROCESSED DATASETS...")
+        print("=" * 60)
+        
+        processed_path = self.base_path / "data" / "processed_data"
+        processed_datasets = {}
+        
+        if not processed_path.exists():
+            print("⚠️  No processed_data directory found")
+            return processed_datasets
+            
+        # Find processed files
+        processed_files = []
+        for ext in ['.gpkg', '.shp', '.geojson', '.csv', '.parquet']:
+            pattern = f"**/*{ext}"
+            found_files = list(processed_path.glob(pattern))
+            processed_files.extend(found_files)
+        
+        print(f"📊 Found {len(processed_files)} processed files")
+        
+        for file_path in tqdm(processed_files, desc="Loading processed datasets"):
+            try:
+                dataset_name = file_path.stem
+                
+                if file_path.suffix.lower() in ['.gpkg', '.shp', '.geojson']:
+                    # Load as geodataframe
+                    gdf = gpd.read_file(file_path)
+                    dataset_info = {
+                        'name': dataset_name,
+                        'file_path': file_path,
+                        'data': gdf,
+                        'data_type': 'processed_vector',
+                        'feature_count': len(gdf),
+                        'columns': list(gdf.columns),
+                        'numeric_columns': list(gdf.select_dtypes(include=[np.number]).columns),
+                        'crs': gdf.crs if hasattr(gdf, 'crs') else None
+                    }
+                else:
+                    # Load as regular dataframe
+                    if file_path.suffix.lower() == '.csv':
+                        df = pd.read_csv(file_path)
+                    elif file_path.suffix.lower() == '.parquet':
+                        df = pd.read_parquet(file_path)
+                    else:
+                        continue
+                        
+                    dataset_info = {
+                        'name': dataset_name,
+                        'file_path': file_path,
+                        'data': df,
+                        'data_type': 'processed_tabular',
+                        'rows': len(df),
+                        'columns': list(df.columns),
+                        'numeric_columns': list(df.select_dtypes(include=[np.number]).columns)
+                    }
+                
+                processed_datasets[dataset_name] = dataset_info
+                print(f"✅ {dataset_name} ({dataset_info['data_type']})")
+                
+            except Exception as e:
+                print(f"❌ Error loading {file_path.name}: {str(e)[:100]}...")
+        
+        print(f"📈 Total processed datasets loaded: {len(processed_datasets)}")
+        return processed_datasets
+
+    def create_processed_data_visualizations(self, processed_datasets: Dict):
+        """Create comprehensive visualizations for processed datasets with metadata enhancement."""
+        print(f"\n🎨 CREATING PROCESSED DATA VISUALIZATIONS WITH METADATA INTEGRATION...")
+        print("=" * 60)
+        
+        if not processed_datasets:
+            print("⚠️  No processed datasets to visualize")
+            return []
+        
+        output_files = []
+        
+        for dataset_name, info in tqdm(processed_datasets.items(), desc="Creating processed visualizations"):
+            try:
+                # Check if visualization already exists - organize in processed data structure
+                output_file = self.processed_output_path / f'enhanced_{dataset_name}.png'
+                
+                if output_file.exists():
+                    print(f"⏭️  Skipping {dataset_name}: visualization already exists")
+                    output_files.append(output_file)
+                    continue
+                
+                if info['data_type'] == 'processed_vector':
+                    gdf = info['data']
+                    numeric_cols = info['numeric_columns']
+                    
+                    if len(numeric_cols) == 0:
+                        print(f"⚠️  Skipping {dataset_name}: no numeric columns")
+                        continue
+                    
+                    # Calculate grid layout for all numeric columns
+                    n_cols = min(4, len(numeric_cols))
+                    n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
+                    
+                    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 5, n_rows * 4))
+                    
+                    # Handle single subplot case
+                    if len(numeric_cols) == 1:
+                        axes = np.array([axes])
+                    elif n_rows == 1 and n_cols > 1:
+                        axes = axes.reshape(1, -1)
+                    elif n_rows > 1 and n_cols == 1:
+                        axes = axes.reshape(-1, 1)
+                    
+                    for i, col in enumerate(numeric_cols):
+                        if i >= len(numeric_cols):
+                            break
+                            
+                        row = i // n_cols
+                        col_idx = i % n_cols
+                        ax = axes[row, col_idx] if n_rows > 1 or n_cols > 1 else axes[0]
+                        
+                        try:
+                            # Add Jakarta boundaries for context
+                            if self.neighborhoods is not None:
+                                self.neighborhoods.boundary.plot(ax=ax, color='lightgray', linewidth=0.5, alpha=0.7)
+                            elif self.jakarta_boundaries is not None:
+                                self.jakarta_boundaries.boundary.plot(ax=ax, color='lightgray', linewidth=0.8)
+                            
+                            # Get metadata information for enhanced titles
+                            col_metadata = self.metadata['neighborhood_columns'].get(col, {})
+                            col_title = col_metadata.get('full_name', col)
+                            col_category = col_metadata.get('category', 'Unknown')
+                            col_description = col_metadata.get('description', '')
+                            
+                            # Calculate statistics with median as default aggregation
+                            if gdf[col].std() > 0:
+                                # Use median-based aggregation for visualization
+                                median_val = gdf[col].median()
+                                mad = np.median(np.abs(gdf[col] - median_val))  # Median Absolute Deviation
+                                
+                                # Create choropleth map
+                                gdf.plot(ax=ax, column=col, cmap='viridis', alpha=0.8, 
+                                        edgecolor='white', linewidth=0.2, legend=True,
+                                        legend_kwds={'shrink': 0.8, 'aspect': 20})
+                                
+                                # Add enhanced statistics text with metadata
+                                stats_text = f"Median: {median_val:.2f}\nMAD: {mad:.2f}\nRange: {gdf[col].min():.2f}-{gdf[col].max():.2f}"
+                                if col_category != 'Unknown':
+                                    stats_text += f"\nCategory: {col_category}"
+                                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                                       verticalalignment='top', fontsize=7,
+                                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                            else:
+                                # Uniform data - use single color
+                                gdf.plot(ax=ax, color='lightblue', alpha=0.7, edgecolor='white', linewidth=0.2)
+                                uniform_text = f"Uniform: {gdf[col].iloc[0]:.2f}"
+                                if col_category != 'Unknown':
+                                    uniform_text += f"\nCategory: {col_category}"
+                                ax.text(0.02, 0.98, uniform_text, 
+                                       transform=ax.transAxes, verticalalignment='top', fontsize=7,
+                                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                            
+                            # Use metadata-enhanced title
+                            title = col_title if col_title != col else col
+                            subtitle = f"({col})" if col_title != col else "(Median-based)"
+                            ax.set_title(f"{title}\n{subtitle}", fontsize=9, pad=10)
+                            ax.set_xlabel('Longitude', fontsize=8)
+                            ax.set_ylabel('Latitude', fontsize=8)
+                            ax.tick_params(labelsize=6)
+                            ax.set_aspect('equal', adjustable='box')
+                            
+                        except Exception as e:
+                            ax.text(0.5, 0.5, f"Error plotting\n{col}\n{str(e)[:50]}...", 
+                                   ha='center', va='center', transform=ax.transAxes)
+                    
+                    # Hide unused subplots
+                    for i in range(len(numeric_cols), n_rows * n_cols):
+                        row = i // n_cols
+                        col_idx = i % n_cols
+                        if n_rows > 1 or n_cols > 1:
+                            try:
+                                axes[row, col_idx].set_visible(False)
+                            except (IndexError, AttributeError):
+                                continue
+                    
+                    plt.suptitle(f'Processed Data Analysis - {dataset_name}\n'
+                               f'({info["feature_count"]:,} features, {len(numeric_cols)} numeric columns)', 
+                               fontsize=14, y=0.98)
+                    plt.tight_layout()
+                    
+                    # Save the plot (output_file already defined above)
+                    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+                    plt.close(fig)
+                    
+                    output_files.append(output_file)
+                    print(f"✅ Saved processed visualization: {output_file}")
+                    
+            except Exception as e:
+                print(f"❌ Error creating processed visualization for {dataset_name}: {e}")
+        
+        return output_files
+
+    def create_tabular_joined_visualizations(self):
+        """Create visualizations with tabular data joined to vector areas using median aggregation."""
+        print(f"\n🔗 CREATING TABULAR-JOINED VISUALIZATIONS...")
+        print("=" * 60)
+        
+        if not self.tabular_datasets or self.neighborhoods is None:
+            print("⚠️  Missing tabular datasets or neighborhood boundaries for joining")
+            return []
+        
+        output_files = []
+        
+        # Use neighborhoods as base geometry for joining
+        base_gdf = self.neighborhoods.copy()
+        
+        for folder_name, datasets in self.tabular_datasets.items():
+            for dataset_name, info in datasets.items():
+                try:
+                    df = info['data']
+                    numeric_cols = info['numeric_columns']
+                    
+                    if len(numeric_cols) == 0:
+                        print(f"⚠️  Skipping {dataset_name}: no numeric columns")
+                        continue
+                    
+                    # Try to find common columns for joining
+                    common_cols = []
+                    for col in df.columns:
+                        if col.lower() in ['kelurahan', 'district', 'area_name', 'name', 'id']:
+                            common_cols.append(col)
+                    
+                    if not common_cols and len(df) == len(base_gdf):
+                        # Same number of rows - assume same order
+                        print(f"📊 Joining {dataset_name} by position (same row count)")
+                        joined_gdf = base_gdf.copy()
+                        for col in numeric_cols:
+                            # Use median aggregation for joining
+                            if df[col].notna().any():
+                                joined_gdf[f"{col}_median"] = df[col].fillna(df[col].median())
+                            else:
+                                joined_gdf[f"{col}_median"] = 0
+                    else:
+                        print(f"⚠️  Skipping {dataset_name}: cannot find suitable join columns")
+                        continue
+                    
+                    # Create visualization for joined data
+                    plot_cols = [col for col in joined_gdf.columns if col.endswith('_median')]
+                    
+                    if len(plot_cols) == 0:
+                        continue
+                    
+                    n_plot_cols = min(4, len(plot_cols))
+                    n_plot_rows = (len(plot_cols) + n_plot_cols - 1) // n_plot_cols
+                    
+                    fig, axes = plt.subplots(n_plot_rows, n_plot_cols, 
+                                           figsize=(n_plot_cols * 4, n_plot_rows * 3))
+                    
+                    if len(plot_cols) == 1:
+                        axes = np.array([axes])
+                    elif n_plot_rows == 1 and n_plot_cols > 1:
+                        axes = axes.reshape(1, -1)
+                    elif n_plot_rows > 1 and n_plot_cols == 1:
+                        axes = axes.reshape(-1, 1)
+                    
+                    for i, col in enumerate(plot_cols):
+                        if i >= len(plot_cols):
+                            break
+                            
+                        row = i // n_plot_cols
+                        col_idx = i % n_plot_cols
+                        ax = axes[row, col_idx] if n_plot_rows > 1 or n_plot_cols > 1 else axes[0]
+                        
+                        try:
+                            # Create choropleth with median aggregation
+                            if joined_gdf[col].std() > 0:
+                                joined_gdf.plot(ax=ax, column=col, cmap='viridis', alpha=0.8,
+                                               edgecolor='white', linewidth=0.2, legend=True,
+                                               legend_kwds={'shrink': 0.8, 'aspect': 20})
+                                
+                                # Add median-based statistics
+                                median_val = joined_gdf[col].median()
+                                q25 = joined_gdf[col].quantile(0.25)
+                                q75 = joined_gdf[col].quantile(0.75)
+                                
+                                stats_text = f"Median: {median_val:.2f}\nQ25: {q25:.2f}\nQ75: {q75:.2f}"
+                                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                                       verticalalignment='top', fontsize=7,
+                                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                            else:
+                                joined_gdf.plot(ax=ax, color='lightcoral', alpha=0.7, 
+                                               edgecolor='white', linewidth=0.2)
+                            
+                            clean_col_name = col.replace('_median', '')
+                            ax.set_title(f"{clean_col_name}\n(Median aggregated)", fontsize=9, pad=10)
+                            ax.set_xlabel('Longitude', fontsize=8)
+                            ax.set_ylabel('Latitude', fontsize=8)
+                            ax.tick_params(labelsize=6)
+                            ax.set_aspect('equal', adjustable='box')
+                            
+                        except Exception as e:
+                            ax.text(0.5, 0.5, f"Error plotting\n{col}\n{str(e)[:30]}", 
+                                   ha='center', va='center', transform=ax.transAxes)
+                    
+                    # Hide unused subplots
+                    for i in range(len(plot_cols), n_plot_rows * n_plot_cols):
+                        row = i // n_plot_cols
+                        col_idx = i % n_plot_cols
+                        if n_plot_rows > 1 or n_plot_cols > 1:
+                            try:
+                                axes[row, col_idx].set_visible(False)
+                            except (IndexError, AttributeError):
+                                continue
+                    
+                    clean_folder_name = folder_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
+                    clean_dataset_name = dataset_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
+                    
+                    plt.suptitle(f'Tabular-Joined Analysis - {folder_name}/{dataset_name}\n'
+                               f'(Median aggregation, {len(joined_gdf):,} areas)', 
+                               fontsize=12, y=0.98)
+                    plt.tight_layout()
+                    
+                    # Save the plot
+                    output_file = self.output_path / f'joined_{clean_folder_name}_{clean_dataset_name}.png'
+                    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+                    plt.close(fig)
+                    
+                    output_files.append(output_file)
+                    print(f"✅ Saved joined visualization: {output_file}")
+                    
+                except Exception as e:
+                    print(f"❌ Error creating joined visualization for {folder_name}/{dataset_name}: {e}")
+        
+        return output_files
+
     def run_comprehensive_exploration(self):
         """Run the complete data exploration pipeline."""
         print("🚀 STARTING COMPREHENSIVE JAKARTA DATA EXPLORATION")
@@ -721,10 +1235,20 @@ class JakartaDataExplorer:
         self.discover_raster_datasets()  
         self.discover_tabular_datasets()
         
-        # Create folder-separated visualizations
-        print("\n🎨 Creating visualizations...")
+        # Discover processed datasets
+        processed_datasets = self.discover_processed_datasets()
+        
+        # Create organized visualizations
+        print("\n🎨 Creating organized visualizations...")
         vector_files = self.create_folder_separated_vector_visualizations()
+        raster_files = self.create_folder_separated_raster_visualizations()
         tabular_files = self.create_comprehensive_tabular_visualizations()
+        
+        # Create processed data visualizations
+        processed_files = self.create_processed_data_visualizations(processed_datasets)
+        
+        # Create tabular-joined visualizations with median aggregation
+        joined_files = self.create_tabular_joined_visualizations()
         
         # Generate comprehensive report
         self.create_comprehensive_report()
@@ -738,9 +1262,14 @@ class JakartaDataExplorer:
             'vector_datasets': total_vector,
             'raster_datasets': total_raster,
             'tabular_datasets': total_tabular,
+            'processed_datasets': len(processed_datasets),
             'vector_files': len(vector_files),
+            'raster_files': len(raster_files),
             'tabular_files': len(tabular_files),
-            'output_path': self.output_path
+            'processed_files': len(processed_files),
+            'joined_files': len(joined_files),
+            'raw_output_path': self.raw_output_path,
+            'processed_output_path': self.processed_output_path
         }
 
 
@@ -763,9 +1292,14 @@ def main():
     print(f"✅ Vector datasets analyzed: {results['vector_datasets']}")
     print(f"✅ Raster datasets analyzed: {results['raster_datasets']}")  
     print(f"✅ Tabular datasets analyzed: {results['tabular_datasets']}")
+    print(f"🔄 Processed datasets analyzed: {results['processed_datasets']}")
     print(f"🎨 Vector visualization files created: {results.get('vector_files', 0)}")
+    print(f"🌍 Raster visualization files created: {results.get('raster_files', 0)}")
     print(f"📊 Tabular visualization files created: {results.get('tabular_files', 0)}")
-    print(f"📁 All visualizations saved to: {results['output_path']}")
+    print(f"🔄 Processed visualization files created: {results.get('processed_files', 0)}")
+    print(f"🔗 Tabular-joined visualization files created: {results.get('joined_files', 0)}")
+    print(f"📁 Raw data visualizations: {results['raw_output_path']}")
+    print(f"🔄 Processed data visualizations: {results['processed_output_path']}")
     
     return results
 
