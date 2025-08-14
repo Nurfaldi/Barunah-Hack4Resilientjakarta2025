@@ -1,0 +1,66 @@
+Folder,Table,Rows,Columns
+24 Gender,socioeconomic_gender_2016,261,11
+24 Gender,socioeconomic_gender_2017,261,11
+24 Gender,socioeconomic_gender_2019,261,11
+24 Gender,socioeconomic_gender_2018,261,11
+24 Gender,socioeconomic_gender_2024,261,11
+24 Gender,socioeconomic_gender_2020,261,11
+24 Gender,socioeconomic_gender_2021,261,11
+24 Gender,socioeconomic_gender_2023,261,11
+24 Gender,socioeconomic_gender_2022,261,11
+Population based on Age,socioeconomic_age_2016,4176,10
+Population based on Age,socioeconomic_age_2017,4176,10
+Population based on Age,socioeconomic_age_2020,4176,10
+Population based on Age,socioeconomic_age_2021,4176,10
+Population based on Age,socioeconomic_age_2023,4176,10
+Population based on Age,socioeconomic_age_2022,4176,10
+Population based on Age,socioeconomic_age_2019,4176,10
+Population based on Age,socioeconomic_age_2018,4176,10
+Population based on Age,socioeconomic_age_2024,4176,10
+Primary Drainage System,saluran_drainase_primer,38,18
+Primary Drainage System,sungai_primer,15,17
+Secondary Drainage System,saluran_drainase_sekunder,36,18
+Secondary Drainage System,sekunder_poly,36,17
+Tertiary Drainage System,saluran_drainase_tersier,1206,20
+11 Distance to rivers,indonesia_sungai_ln,12641,4
+25 Poverty Data,socioeconomic_poverty_2014,261,12
+25 Poverty Data,socioeconomic_poverty_2021,261,10
+25 Poverty Data,socioeconomic_poverty_2018,261,11
+25 Poverty Data,socioeconomic_poverty_2024,261,10
+09 Water pumps locations,waterpump_stasioner,202,6
+Population based Education,socioeconomic_education_2016,2600,10
+Population based Education,socioeconomic_education_2017,2609,10
+Population based Education,socioeconomic_education_2019,2609,10
+Population based Education,socioeconomic_education_2024,2610,10
+Population based Education,socioeconomic_education_2018,2609,10
+Population based Education,socioeconomic_education_2023,2610,10
+Population based Education,socioeconomic_education_2022,2608,10
+Population based Education,socioeconomic_education_2020,2608,10
+Population based Education,socioeconomic_education_2021,2609,10
+Population Density (Vector),pop_den_2015-2024,261,26
+hexagons_with_dataV5,hexagons_with_data14,6623,174
+Neighborhoods,neighborhoods_5.0,261,195
+04 BldgAge_Building Age,building_age,1651218,4
+05 BldgAr_Building Area,building_area,1651218,4
+27 Residence Living in Informal Settlements,socioeconomic_informal_residence_2023,261,10
+06 Proportion of Residential Area,proportion_residential_area,2728,16
+26 Cash Assistance (BLT),socioeconomic_cash_assistance_2024,261,10
+Flood Depth,genangan_2016,374,14
+Flood Depth,voronoi_genangan_2017,518,14
+Flood Depth,voronoi_genangan_2016,372,14
+Flood Depth,genangan_2017,525,14
+Flood Depth,genangan_2020,619,14
+Flood Depth,voronoi_genangan_2021,331,14
+Flood Depth,voronoi_genangan_2020,613,14
+Flood Depth,genangan_2021,333,14
+Flood Depth,genangan_2023,331,14
+Flood Depth,voronoi_genangan_2022,319,14
+Flood Depth,voronoi_genangan_2023,327,14
+Flood Depth,genangan_2022,321,14
+Flood Depth,vorono_genangan_2018,232,14
+Flood Depth,genangan_2019,379,14
+Flood Depth,voronoi_genangan_2024,699,14
+Flood Depth,voronoi_genangan_2018,232,14
+Flood Depth,voronoi_genangan_2019,376,14
+Flood Depth,genangan_2018,238,14
+Flood Depth,genangan_2024,715,14
