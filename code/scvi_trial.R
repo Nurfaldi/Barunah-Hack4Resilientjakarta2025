@@ -149,12 +149,15 @@ all_indicators_z  <- all_indicators %>%
     n_pump = -1 * n_pump
   )
 
-scvi_df <- all_indicators_z %>% 
-  transmute(
-    id_obj, id_kel,
-    scvi = rowSums(select(., -starts_with("id_")), na.rm = TRUE)
-  )
-
+  scvi_df <- all_indicators_z %>% 
+    transmute(
+      id_obj, id_kel,
+      sensitivity_index = rowSums(across(c(age_young, age_old, fem_pop, pop_dens24, pop_growth)), na.rm = TRUE),
+      adaptive_index    = rowSums(across(c(low_edu24, drn_sys, n_pump, imperv_area, n_informal)), na.rm = TRUE),
+      hazard_index      = rowSums(across(c(dist_rv, dist_coast, flo_depth24, flo_freq24, land_sub24)), na.rm = TRUE),
+      scvi              = rowSums(across(ends_with("index")), na.rm = TRUE)
+    )
+  
 
 scvi_sf <- kel_geom %>% 
   left_join(
@@ -164,6 +167,7 @@ scvi_sf <- kel_geom %>%
   st_cast("MULTIPOLYGON") %>% 
   st_as_sf()
 
+st_write(scvi_sf, "data/processed_data/scvi_jakarta_2024.geojson", driver = "GeoJSON")
 
 scvi_plot <- ggplot(scvi_sf) +
   geom_sf(
