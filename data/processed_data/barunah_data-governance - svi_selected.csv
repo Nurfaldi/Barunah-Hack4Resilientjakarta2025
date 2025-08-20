@@ -1,0 +1,22 @@
+indicators,description,domain,dimension,datasource,dataset,column,loaded,merged,direction
+old age population,Population percentage of people aged above 65,,population factors,Age,socioeconomic_age,age_old,TRUE,TRUE,positive
+young age population,Population percentage of people aged below 10,,population factors,Age,socioeconomic_age,age_young,TRUE,TRUE,positive
+distance to coast,Distance to coastline,,risk exposure,Neighborhood Level GIS Data,neighborhood,dist_coast,TRUE,TRUE,negative
+distance to river,Distance to nearest river,,risk exposure,Neighborhood Level GIS Data,neighborhood,dist_rv,TRUE,TRUE,negative
+drainage system capacity,Drainage system capacity index (relative score).,,infrastructure and environment capacity,Neighborhood Level GIS Data,neighborhood,drn_sys,TRUE,TRUE,negative
+female population,Percentage of female population,,population factors,Gender,socioeconomic_gender,fem_pop,TRUE,TRUE,positive
+flood depth,Mean flood depth (m) per year.,,risk exposure,Neighborhood Level GIS Data,neighborhood,flo_depth24,TRUE,TRUE,positive
+flood frequency,Flood occurrence frequency per year.,,risk exposure,Neighborhood Level GIS Data,neighborhood,flo_freq24,TRUE,TRUE,positive
+groundwater usage,Groundwater usage per neighborhood,,risk exposure,Satu Data Jakarta,groundwater_usage_district,gw_usage,TRUE,TRUE,positive
+mean impervious surface,Mean impervious surface between buildings.,,infrastructure and environment capacity,Neighborhood Level GIS Data,neighborhood,imperv_area,TRUE,TRUE,positive
+land subsidience rate,Land subsidence rate (cm/year),,risk exposure,Neighborhood Level GIS Data,neighborhood,land_sub24,TRUE,TRUE,positive
+low education population,Percentage of population with low education by year.,,population factors,Neighborhood Level GIS Data,neighborhood,low_edu24,TRUE,TRUE,positive
+number of RW in informal residents,Number of RWs where residents live in informal settlements in each kelurahan (neighbourhood),,infrastructure and environment capacity,Residence Living in Informal Settlements,socioeconomic_informal_residence,n_informal,TRUE,TRUE,positive
+count of water pumps,Pump Station Count per Location,,infrastructure and environment capacity,Neighborhood Level GIS Data,neighborhood,n_pump,TRUE,TRUE,negative
+population density,Population density (persons/km²) by year.,,population factors,Neighborhood Level GIS Data,neighborhood,pop_dens24,TRUE,TRUE,positive
+population growth,Population growth for each neighborhood,,population factors,Neighborhood Level GIS Data,socioeconomic_gender,pop_growth,TRUE,TRUE,positive
+rainfall,Annual mean rainfall (mm),,risk exposure,Neighborhood Level GIS Data,neighborhood,rain24,TRUE,TRUE,positive
+total building area,Total building area (m²).,,infrastructure and environment capacity,Neighborhood Level GIS Data,neighborhood,t_build_a,TRUE,TRUE,positive
+topography,Topographic elevation value (m or relative index).,,infrastructure and environment capacity,Neighborhood Level GIS Data,neighborhood,topo,TRUE,TRUE,negative
+vegetation cover,Vegetation coverage (%) by year.,,infrastructure and environment capacity,Neighborhood Level GIS Data,neighborhood,veg_cov24,TRUE,TRUE,negative
+vulnerable employment population,Percentage of population who have vulnerable occupation,,population factors,Satu Data Jakarta,occupation_neighborhood,vulemp_pop,TRUE,TRUE,positive
