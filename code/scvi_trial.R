@@ -336,6 +336,14 @@ st_write(scvi_unweight_sf, "data/processed_data/scvi_jakarta_2024.geojson", driv
 ### csv format
 scvi_unweight_sf %>% st_drop_geometry() %>% write_csv("data/processed_data/scvi_unweighted_2024.csv")
 
+scvi_with_indicators  <- scvi_unweight_sf %>%
+  st_drop_geometry() %>% 
+  select(-c(population, population_density, population_growth, vulnerable_employment_population)) %>% 
+  left_join(
+    all_indicators_z %>% mutate(id_kel = str_to_title(id_kel)),
+    by = c("id_obj","id_kel")
+  )
+
 # plotting the vulnerability index
 ## barchart
 scvi_uw_bar  <- scvi_unweighted_df %>% arrange(desc(scvi)) %>% head(8) %>%
@@ -386,3 +394,52 @@ scvi_unweighted_plotly  <- ggplotly(scvi_unweighted_plot, tooltip = "text")
 
 saveWidget(scvi_unweighted_plotly,"output/web/kelurahan_scvi.html", selfcontained = TRUE)
 
+# analysis
+## analyzing the most contributing indicators
+index_stat  <- scvi_with_indicators %>% 
+  group_by(id_kot) %>% 
+  summarise(
+    across(
+      .cols = c(scvi, index_risk, index_infenv, index_population),
+      .fns  = list(
+        mean = ~mean(.x, na.rm = TRUE),
+        median = ~median(.x, na.rm = TRUE),
+        sum = ~sum(.x, na.rm = TRUE)
+      ),
+      .names = "{.col}_{.fn}"
+    )
+  )
+
+## Population Factors
+pop_fit  <- scvi_with_indicators %>% 
+  filter(id_kot == "Jakarta Utara") %>% 
+  select(index_population,all_of(dim_pop)) %>% 
+  cor(use = "pairwise.complete.obs")
+
+
+pop_risk_vs_indicators <- pop_fit["index_population", -1] |> sort(decreasing = TRUE)
+
+pop_risk_vs_indicators
+
+## Infrastructure and Environment
+
+infenv_fit  <- scvi_with_indicators %>% 
+  filter(id_kot == "Jakarta Barat") %>% 
+  select(index_infenv,all_of(dim_inf_env)) %>% 
+  cor(use = "pairwise.complete.obs")
+
+
+infenv_risk_vs_indicators <- infenv_fit["index_infenv", -1] |> sort(decreasing = TRUE)
+
+infenv_risk_vs_indicators
+
+## Risk
+haz_fit  <- scvi_with_indicators %>% 
+  filter(id_kot == "Jakarta Selatan") %>% 
+  select(index_risk,all_of(dim_risk)) %>% 
+  cor(use = "pairwise.complete.obs")
+
+
+haz_risk_vs_indicators <- haz_fit["index_risk", -1] |> sort(decreasing = TRUE)
+
+haz_risk_vs_indicators

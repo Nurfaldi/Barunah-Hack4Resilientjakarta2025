@@ -32,6 +32,5 @@ Beyond the hackathon, the dashboard is designed as a prototype for long-term pol
 
 ## Supporting Materials
 
-*[To be added]*
-
+- [Analysis of Sinking City Vulnerability Index](docs/scvi_analysis.md): is the methodology documentation for the Sinking City Vulnerability Index (SCVI) based on the provided R script.
 
