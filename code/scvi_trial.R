@@ -7,20 +7,29 @@ library(janitor)
 library(here)
 library(osmdata)
 library(readxl)
+library(classInt)
 library(htmlwidgets)
 
 source("code/utils.R")
 ensure_root()
 
-# load data
-## neighborhood
+# load list of indicators
+indicator_list  <- read_csv("data/processed_data/barunah_data-governance - svi_selected.csv") %>% 
+  select(-c(domain, loaded, merged))
+
+# data preprocessing
+## multivariate neighborhood level data
 nb_raw  <- st_read("data/extracted_data/02 GIS Data (Neighborhood & Grid levels)/Neighborhoods/Neighborhoods_5.0.shp") %>% 
   st_drop_geometry() %>% 
   clean_names()
 
 kel_geom  <- st_read("data/extracted_data/01 Area of Interest/Kelurahan/adm_dki-jakarta_kelurahan.shp") %>% 
   clean_names() %>% 
-  select(id_obj = objectid, id_kel = wadmkd) %>% 
+  select(
+    id_obj = objectid, 
+    id_kot = wadmkk,
+    id_kec = wadmkc,
+    id_kel = wadmkd) %>% 
   st_make_valid()
 
 jakarta_bbox  <- kel_geom %>% st_bbox()
@@ -177,8 +186,8 @@ gwater_df  <- nb_raw %>%
   select(objectid, wadmkd, gw_usage) %>% 
   replace(is.na(.),0)
 
-## merge data
-
+# data preparation
+## merge all indicators
 all_indicators  <- nb_raw %>% 
   select(
     # identifier
@@ -233,6 +242,7 @@ all_indicators  <- nb_raw %>%
     id_kel = str_to_lower(id_kel)
   )
 
+## calculate statistical descriptive for all indicators
 all_indicators_stat  <- all_indicators %>% 
   skim() %>%
   filter(
@@ -241,6 +251,8 @@ all_indicators_stat  <- all_indicators %>%
   ) %>% 
   select(-starts_with("character."))
 
+# index calculation
+## calculate z-score for all indicators
 all_indicators_z  <- all_indicators %>% 
   mutate(
     across(
@@ -257,21 +269,75 @@ all_indicators_z  <- all_indicators %>%
     veg_cov24 = -1 * veg_cov24
   )
 
-dom_inf_env <- c("drn_sys","n_pump","topo","veg_cov24","imperv_area","n_informal","t_build_a")
-dom_pop  <- c("age_old","age_young","fem_pop","pop_growth","pop_dens24","vulemp_pop","low_edu24")
-dom_risk <- c("dist_coast","dist_rv","flo_depth24","flo_freq24","gw_usage","land_sub24","rain24")
+## calculate vulnerability index
+### grouping indicators based on the dimension
+dim_inf_env <- indicator_list %>% filter(dimension == "infrastructure and environment capacity") %>% pull(column)
+dim_pop  <- indicator_list %>% filter(dimension == "population factors") %>% pull(column)
+dim_risk <- indicator_list %>% filter(dimension == "risk exposure") %>% pull(column)
 
+### calculate unweighted vulnerability index
 scvi_unweighted_df <- all_indicators_z %>% 
   transmute(
     id_obj, id_kel,
-    index_risk = rowSums(across(all_of(dom_risk)), na.rm = TRUE),
-    index_population    = rowSums(across(all_of(dom_pop)), na.rm = TRUE),
-    index_infenv      = rowSums(across(all_of(dom_inf_env)), na.rm = TRUE),
-    scvi              = rowSums(across(starts_with("index")), na.rm = TRUE)
+    index_risk = rowSums(across(all_of(dim_risk)), na.rm = TRUE), # sum all indicators in risk expousre dimension
+    index_population    = rowSums(across(all_of(dim_pop)), na.rm = TRUE), # sum all indicators in population factors dimension
+    index_infenv      = rowSums(across(all_of(dim_inf_env)), na.rm = TRUE), # sum all indicators in infrastructure capability dimension
+    scvi              = rowSums(across(starts_with("index")), na.rm = TRUE) # summ all dimension score
   )
 
-scvi_unweighted_df %>% write_csv("data/processed_data/scvi_unweighted_2024.csv")
+### classiffy SCVI scores into 5 categories using Jenks Natural Breaks
+  jenks_breaks <- classIntervals(scvi_unweighted_df$scvi, n = 5, style = "jenks")
 
+  scvi_uw_cl_df <- scvi_unweighted_df %>%
+    mutate(
+      scvi_cat = cut(
+        scvi,
+        breaks = jenks_breaks$brks,
+        labels = c("Very Low", "Low", "Medium", "High", "Very High"),
+        include.lowest = TRUE
+      )
+    )
+
+
+## export vulnerability index data
+### geospatial vector format
+scvi_unweight_sf <- kel_geom %>% 
+  mutate(id_kel = str_to_lower(id_kel)) %>% 
+  left_join(
+    scvi_uw_cl_df,
+    by = c("id_obj","id_kel")
+  ) %>% 
+  left_join(
+    all_indicators %>% select(
+      id_obj, id_kel,
+      population_density = pop_dens24, 
+      vulnerable_employment_population = vulemp_pop, 
+      population_growth = pop_growth),
+    by = c("id_obj","id_kel")
+  ) %>% 
+  left_join(
+    popgrowth_df %>%
+      select(id_obj = objectid, id_kel = wadmkd, population = pop_24) %>% 
+      mutate(id_kel = str_to_lower(id_kel)),
+    by = c("id_obj","id_kel")
+  ) %>% 
+  mutate(
+    across(
+      .cols = where(is.character),
+      .fns = str_to_title
+    )
+  ) %>% 
+  st_cast("MULTIPOLYGON") %>% 
+  st_as_sf() %>% 
+  st_set_crs(st_crs(kel_geom))
+
+st_write(scvi_unweight_sf, "data/processed_data/scvi_jakarta_2024.geojson", driver = "GeoJSON", delete_dsn = TRUE)
+
+### csv format
+scvi_unweight_sf %>% st_drop_geometry() %>% write_csv("data/processed_data/scvi_unweighted_2024.csv")
+
+# plotting the vulnerability index
+## barchart
 scvi_uw_bar  <- scvi_unweighted_df %>% arrange(desc(scvi)) %>% head(8) %>%
   ggplot(aes(x = scvi, y = reorder(id_kel, scvi))) +
     geom_col(fill = "#cf551c", width = 0.75) +
@@ -291,39 +357,18 @@ scvi_uw_bar  <- scvi_unweighted_df %>% arrange(desc(scvi)) %>% head(8) %>%
     )
   
 
-scvi_unweight_sf <- kel_geom %>% 
-  mutate(id_kel = str_to_lower(id_kel)) %>% 
-  left_join(
-    scvi_unweighted_df,
-    by = c("id_obj","id_kel")
-  ) %>% 
-  left_join(
-    all_indicators %>% select(
-      id_obj, id_kel,
-      population_density = pop_dens24, 
-      vulnerable_employment_population = vulemp_pop, 
-      population_growth = pop_growth),
-    by = c("id_obj","id_kel")
-  ) %>% 
-  left_join(
-    popgrowth_df %>%
-      select(id_obj = objectid, id_kel = wadmkd, population = pop_24) %>% 
-      mutate(id_kel = str_to_lower(id_kel)),
-    by = c("id_obj","id_kel")
-  ) %>% 
-  st_cast("MULTIPOLYGON") %>% 
-  st_as_sf() %>% 
-  st_set_crs(st_crs(kel_geom))
-
-st_write(scvi_unweight_sf, "data/processed_data/scvi_jakarta_2024.geojson", driver = "GeoJSON", delete_dsn = TRUE)
-
+## map chart
 scvi_unweighted_plot <- ggplot(scvi_unweight_sf) +
   geom_sf(
     aes(
       fill = scvi,
       text = paste0(
-        "Kelurahan: ", str_to_title(id_kel), "<br>",
-        "SCVI: ", round(scvi, 2)
+        "Kota: ", id_kot,"<br>",
+        "Kecamatan: ", id_kec, "<br>",
+        "Kelurahan: ", id_kel, "<br>",
+        "SCVI: ", round(scvi, 2), "<br>",
+        "Category: ", scvi_cat, "<br>",
+        "Population: ",population
       )
     ),
     color = "white", size = 0.2
@@ -331,11 +376,12 @@ scvi_unweighted_plot <- ggplot(scvi_unweight_sf) +
   scale_fill_gradient(low = "#fdf2e9", high = "#cf551c", name = "SCVI") +
   theme_minimal()
 
+## export chart to PNG format
 ggsave(plot = scvi_unweighted_plot,filename = "output/image/scvi_unweighted_map.png",width = 8,height = 8,dpi = 300)
 ggsave(plot = scvi_uw_bar, filename = "output/image/scvi_unweighted_bar.png",width = 13, height = 8, dpi = 300)
 
 
-# plotly will use the "text" aesthetic for tooltips
+## turn into interactive chart and export to html widget
 scvi_unweighted_plotly  <- ggplotly(scvi_unweighted_plot, tooltip = "text")
 
 saveWidget(scvi_unweighted_plotly,"output/web/kelurahan_scvi.html", selfcontained = TRUE)
