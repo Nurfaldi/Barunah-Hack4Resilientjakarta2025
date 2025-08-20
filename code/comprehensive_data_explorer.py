@@ -20,6 +20,8 @@ from collections import defaultdict
 import pandas as pd
 import geopandas as gpd
 import rasterio
+import rasterio.warp
+from rasterio.warp import transform_bounds
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -119,6 +121,30 @@ class JakartaDataExplorer:
             print(f"⚠️  Warning: Could not fully load metadata: {e}")
             
         return metadata
+    
+    def _get_jakarta_bounds_with_buffer(self, buffer=0.01):
+        """Get Jakarta bounds with buffer for consistent plotting."""
+        if self.neighborhoods is not None:
+            bounds = self.neighborhoods.total_bounds
+        elif self.jakarta_boundaries is not None:
+            bounds = self.jakarta_boundaries.total_bounds
+        else:
+            # Default Jakarta bounds if no boundaries available
+            bounds = [106.68, -6.37, 106.97, -6.07]
+        
+        return [
+            bounds[0] - buffer,  # minx
+            bounds[1] - buffer,  # miny
+            bounds[2] + buffer,  # maxx
+            bounds[3] + buffer   # maxy
+        ]
+    
+    def _plot_jakarta_context(self, ax):
+        """Plot Jakarta boundaries as context."""
+        if self.neighborhoods is not None:
+            self.neighborhoods.boundary.plot(ax=ax, color='lightgray', linewidth=0.5, alpha=0.7)
+        elif self.jakarta_boundaries is not None:
+            self.jakarta_boundaries.boundary.plot(ax=ax, color='lightgray', linewidth=0.8, alpha=0.7)
         
     def load_jakarta_boundaries(self) -> bool:
         """Load Jakarta administrative boundaries for context."""
@@ -198,9 +224,113 @@ class JakartaDataExplorer:
             except Exception as e:
                 print(f"❌ Error loading {file_path.name}: {str(e)[:100]}...")
         
+        # Special handling for problematic datasets
+        self._handle_special_datasets()
+        
         total_datasets = sum(len(datasets) for datasets in self.vector_datasets.values())
         print(f"\n📈 Total vector datasets loaded: {total_datasets} across {len(self.vector_datasets)} folders")
         return dict(self.vector_datasets)
+    
+    def _handle_special_datasets(self):
+        """Handle special cases for problematic datasets with enhanced fixes."""
+        print("\n🔧 HANDLING SPECIAL DATASET CASES...")
+        
+        # Handle merged flood data (Dataset 17) with enhanced processing
+        flood_folder = self.extracted_data_path / "17 BPBD flood depth data"
+        if flood_folder.exists():
+            merged_flood_info = self._create_merged_flood_visualization(flood_folder)
+            if merged_flood_info:
+                folder_name = "17 BPBD flood depth data"
+                if folder_name not in self.vector_datasets:
+                    self.vector_datasets[folder_name] = {}
+                self.vector_datasets[folder_name]["Merged_Flood_All_Years"] = merged_flood_info
+                print("✅ Created merged flood visualization for all years")
+        
+        # Handle population density vector (Dataset 21) with CRS fixes
+        pop_folder = self.extracted_data_path / "21 Population density" / "Population Density (Vector)"
+        pop_file = pop_folder / "Pop_Den_2015-2024.shp"
+        if pop_file.exists():
+            try:
+                gdf = gpd.read_file(pop_file)
+                print(f"  📈 Population density: {len(gdf)} features, CRS: {gdf.crs}")
+                
+                # Apply CRS fixes
+                target_crs = 'EPSG:4326'
+                if gdf.crs != target_crs:
+                    try:
+                        gdf = gdf.to_crs(target_crs)
+                        print(f"    🔄 Reprojected population data to {target_crs}")
+                    except Exception as e:
+                        print(f"    ⚠️  Population CRS reprojection failed: {e}")
+                
+                geom_types = gdf.geometry.geom_type.value_counts()
+                primary_geom = geom_types.index[0] if len(geom_types) > 0 else "Unknown"
+                data_type = self._classify_geometry_type(primary_geom)
+                
+                dataset_info = {
+                    'name': 'Pop_Den_2015-2024',
+                    'file_path': pop_file,
+                    'data': gdf,
+                    'geometry_type': primary_geom,
+                    'data_type': data_type,
+                    'feature_count': len(gdf),
+                    'columns': list(gdf.columns),
+                    'crs': gdf.crs,
+                    'bounds': gdf.total_bounds,
+                    'numeric_columns': list(gdf.select_dtypes(include=[np.number]).columns)
+                }
+                
+                folder_name = "21 Population density"
+                if folder_name not in self.vector_datasets:
+                    self.vector_datasets[folder_name] = {}
+                self.vector_datasets[folder_name]["Pop_Den_2015-2024"] = dataset_info
+                print("✅ Added population density vector data with CRS fixes")
+                
+            except Exception as e:
+                print(f"⚠️  Could not load population density vector: {e}")
+        
+        # Enhanced handling for datasets 22-27 (socioeconomic data)
+        socioeconomic_datasets = {
+            '22 Age': 'Population based on Age',
+            '23 Education': 'Population based Education',
+            '24 Gender': None,
+            '25 Poverty Data': None,
+            '26 Cash Assistance (BLT)': None,
+            '27 Residence Living in Informal Settlements': None
+        }
+        
+        for folder_key, subfolder in socioeconomic_datasets.items():
+            folder_path = self.extracted_data_path / folder_key
+            if subfolder:
+                folder_path = folder_path / subfolder
+            
+            if folder_path.exists():
+                # Find the most recent shapefile
+                shapefiles = list(folder_path.glob("*.shp"))
+                if shapefiles:
+                    recent_file = sorted(shapefiles, key=lambda x: x.stem)[-1]
+                    try:
+                        gdf = gpd.read_file(recent_file)
+                        print(f"  📈 Enhanced {folder_key}: {len(gdf)} features, CRS: {gdf.crs}")
+                        
+                        # Apply CRS fixes
+                        if gdf.crs != 'EPSG:4326':
+                            try:
+                                gdf = gdf.to_crs('EPSG:4326')
+                                print(f"    🔄 Reprojected {folder_key} to EPSG:4326")
+                            except Exception as e:
+                                print(f"    ⚠️  {folder_key} CRS reprojection failed: {e}")
+                        
+                        # Update existing dataset info with fixes
+                        if folder_key in self.vector_datasets:
+                            for dataset_name, dataset_info in self.vector_datasets[folder_key].items():
+                                dataset_info['data'] = gdf  # Update with fixed CRS
+                                dataset_info['crs'] = gdf.crs
+                                dataset_info['bounds'] = gdf.total_bounds
+                                print(f"    ✅ Updated {dataset_name} with CRS fixes")
+                                
+                    except Exception as e:
+                        print(f"    ❌ Error enhancing {folder_key}: {e}")
     
     def discover_raster_datasets(self) -> Dict[str, Dict]:
         """Discover all raster datasets in the data directory, organized by folder."""
@@ -613,16 +743,70 @@ class JakartaDataExplorer:
                         ax = axes[row, col_idx] if n_plot_rows > 1 else axes[col_idx]
                         
                         try:
-                            # Create histogram for numeric data
+                            # Enhanced histogram for numeric data with better dynamic scaling for socioeconomic data
                             data_values = df[col].dropna()
                             if len(data_values) > 0:
-                                ax.hist(data_values, bins=30, alpha=0.7, color='skyblue', edgecolor='black')
-                                ax.set_title(f"{col}\n(n={len(data_values):,})", fontsize=10)
+                                # Enhanced dynamic scaling based on actual data distribution
+                                if data_values.std() > 0:
+                                    # Special handling for socioeconomic datasets (22-27) to show kelurahan-level variation
+                                    if any(keyword in folder_name for keyword in ['Age', 'Gender', 'Poverty', 'Cash', 'Informal', 'Education']):
+                                        # Use percentile-based scaling for socioeconomic data to show proper variation
+                                        p5 = data_values.quantile(0.05)
+                                        p95 = data_values.quantile(0.95)
+                                        
+                                        # Show distribution across full range but highlight main distribution
+                                        ax.hist(data_values, bins=25, alpha=0.7, color='steelblue', edgecolor='black')
+                                        
+                                        # Add vertical lines for key percentiles
+                                        ax.axvline(data_values.median(), color='red', linestyle='--', alpha=0.8, label='Median')
+                                        ax.axvline(p5, color='orange', linestyle=':', alpha=0.6, label='5th %ile')
+                                        ax.axvline(p95, color='orange', linestyle=':', alpha=0.6, label='95th %ile')
+                                        
+                                        ax.set_title(f"{col}\n(Kelurahan variation: {p5:.0f}-{p95:.0f})", fontsize=10)
+                                        
+                                        # Enhanced statistics showing kelurahan-level dispersion
+                                        cv = (data_values.std() / data_values.mean()) * 100 if data_values.mean() > 0 else 0
+                                        stats_text = (f"Median: {data_values.median():.1f}\n"
+                                                    f"CV: {cv:.1f}%\n"
+                                                    f"P5-P95: {p5:.0f}-{p95:.0f}\n"
+                                                    f"Kelurahan: {len(data_values)}")
+                                        
+                                        # Add legend for percentile lines
+                                        ax.legend(fontsize=6, loc='upper right')
+                                    else:
+                                        # Standard IQR-based approach for other datasets
+                                        q25 = data_values.quantile(0.25)
+                                        q75 = data_values.quantile(0.75)
+                                        iqr = q75 - q25
+                                        
+                                        # Use IQR-based outlier detection for better range
+                                        lower_bound = q25 - 1.5 * iqr
+                                        upper_bound = q75 + 1.5 * iqr
+                                        
+                                        # Filter extreme outliers but keep reasonable range
+                                        filtered_data = data_values[
+                                            (data_values >= max(lower_bound, data_values.quantile(0.01))) & 
+                                            (data_values <= min(upper_bound, data_values.quantile(0.99)))
+                                        ]
+                                        
+                                        if len(filtered_data) > 0:
+                                            ax.hist(filtered_data, bins=30, alpha=0.7, color='skyblue', edgecolor='black')
+                                            ax.set_title(f"{col}\n(n={len(data_values):,}, IQR-based)", fontsize=10)
+                                            stats_text = (f"Median: {data_values.median():.1f}\n"
+                                                        f"IQR: {iqr:.1f}\n"
+                                                        f"Range: {filtered_data.min():.0f}-{filtered_data.max():.0f}")
+                                        else:
+                                            ax.hist(data_values, bins=20, alpha=0.7, color='lightblue', edgecolor='black')
+                                            ax.set_title(f"{col}\n(n={len(data_values):,}, full range)", fontsize=10)
+                                            stats_text = f"Median: {data_values.median():.2f}\nRange: {data_values.min():.1f}-{data_values.max():.1f}"
+                                else:
+                                    ax.hist(data_values, bins=10, alpha=0.7, color='lightcoral', edgecolor='black')
+                                    ax.set_title(f"{col}\n(n={len(data_values):,}, uniform)", fontsize=10)
+                                    stats_text = f"Value: {data_values.iloc[0]:.2f}\n(Constant)"
+                                
                                 ax.set_xlabel(col, fontsize=8)
                                 ax.set_ylabel('Frequency', fontsize=8)
                                 
-                                # Add statistics
-                                stats_text = f"Mean: {data_values.mean():.2f}\nStd: {data_values.std():.2f}"
                                 ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
                                        verticalalignment='top', fontsize=7,
                                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
@@ -728,68 +912,350 @@ class JakartaDataExplorer:
         return selected
     
     def _plot_vector_dataset(self, ax, dataset_info: Dict, colors: Dict):
-        """Plot a single vector dataset."""
-        gdf = dataset_info['data']
+        """Plot a single vector dataset with comprehensive CRS handling and enhanced visibility."""
+        gdf = dataset_info['data'].copy()
         data_type = dataset_info['data_type']
+        dataset_name = dataset_info.get('name', 'Unknown')
         
-        # Add Jakarta boundaries as context if available
-        if self.neighborhoods is not None:
-            self.neighborhoods.boundary.plot(ax=ax, color='lightgray', linewidth=0.5, alpha=0.7)
-        elif self.jakarta_boundaries is not None:
-            self.jakarta_boundaries.boundary.plot(ax=ax, color='lightgray', linewidth=0.8)
+        # Define target CRS for visualization (WGS84)
+        target_crs = 'EPSG:4326'
         
-        # Plot the dataset
+        # Comprehensive CRS handling with better error handling
+        try:
+            if gdf.crs is not None:
+                current_crs_str = str(gdf.crs)
+                print(f"  📍 Original CRS: {current_crs_str}")
+                
+                # Handle different CRS formats and reproject to WGS84
+                if current_crs_str != target_crs:
+                    try:
+                        gdf = gdf.to_crs(target_crs)
+                        print(f"  🔄 Reprojected to {target_crs}")
+                    except Exception as e:
+                        print(f"  ⚠️  CRS reprojection failed: {e}")
+                        # Try alternative reprojection methods
+                        try:
+                            if 'EPSG:' not in current_crs_str and gdf.crs.to_epsg():
+                                gdf = gdf.to_crs(f'EPSG:{gdf.crs.to_epsg()}')
+                                gdf = gdf.to_crs(target_crs)
+                                print(f"  🔄 Alternative reprojection successful")
+                        except:
+                            print(f"  ❌ All reprojection methods failed")
+            else:
+                print(f"  ⚠️  No CRS defined, assuming WGS84")
+                gdf = gdf.set_crs(target_crs)
+        except Exception as e:
+            print(f"  ❌ CRS handling error: {e}")
+        
+        # Enhanced boundary handling - ALWAYS plot Jakarta context first
+        jakarta_bounds = self._get_jakarta_bounds_with_buffer()
+        self._plot_jakarta_context(ax)
+        
+        # Skip empty datasets
+        if len(gdf) == 0:
+            print(f"  ⚠️  No features to plot for {dataset_name}")
+            ax.text(0.5, 0.5, f'No data available\nfor {dataset_name}', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=10,
+                   bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
+            return
+        
+        # Plot the dataset with enhanced visibility based on geometry type
         color = colors.get(data_type, '#95a5a6')
         
         if data_type == 'point':
-            gdf.plot(ax=ax, color=color, markersize=20, alpha=0.7, edgecolor='white', linewidth=0.5)
+            # Enhanced point plotting with capacity-based coloring and larger markers
+            marker_size = max(20, min(80, 3000 / len(gdf))) if len(gdf) > 0 else 40
+            
+            # Check for capacity/value-based coloring
+            numeric_cols = dataset_info.get('numeric_columns', [])
+            capacity_cols = [col for col in numeric_cols if any(keyword in col.lower() 
+                           for keyword in ['capacity', 'kapasitas', 'tinggi', 'depth'])]
+            
+            if capacity_cols and gdf[capacity_cols[0]].notna().any():
+                val_col = capacity_cols[0]
+                if gdf[val_col].std() > 0:  # Has variation
+                    # Use percentile-based scaling
+                    vmin = gdf[val_col].quantile(0.05)
+                    vmax = gdf[val_col].quantile(0.95)
+                    gdf.plot(ax=ax, column=val_col, cmap='viridis', markersize=marker_size, 
+                           alpha=0.8, edgecolor='white', linewidth=1, legend=True,
+                           legend_kwds={'shrink': 0.6, 'aspect': 15},
+                           vmin=vmin, vmax=vmax)
+                    print(f"  🎨 Plotted {len(gdf)} points with capacity coloring")
+                else:
+                    gdf.plot(ax=ax, color=color, markersize=marker_size, alpha=0.8, 
+                           edgecolor='white', linewidth=1)
+            else:
+                gdf.plot(ax=ax, color=color, markersize=marker_size, alpha=0.8, 
+                       edgecolor='white', linewidth=1)
+                print(f"  🎨 Plotted {len(gdf)} points with uniform color")
+                
         elif data_type == 'line':
-            gdf.plot(ax=ax, color=color, linewidth=1.5, alpha=0.8)
+            # Enhanced line plotting with better visibility
+            line_width = 3.0 if len(gdf) < 100 else 2.0
+            gdf.plot(ax=ax, color=color, linewidth=line_width, alpha=0.9)
+            print(f"  🎨 Plotted {len(gdf)} line features")
+            
         elif data_type == 'polygon':
-            # Check if we have numeric data for coloring
+            # Enhanced polygon plotting with dynamic scaling
             numeric_cols = dataset_info.get('numeric_columns', [])
             if numeric_cols and len(numeric_cols) > 0:
-                # Use first numeric column for coloring
                 col_name = numeric_cols[0]
-                if gdf[col_name].std() > 0:  # Check for variation
-                    gdf.plot(ax=ax, column=col_name, cmap='viridis', alpha=0.7, 
-                           edgecolor='white', linewidth=0.2, legend=True,
-                           legend_kwds={'shrink': 0.8, 'aspect': 20})
+                if gdf[col_name].std() > 0:
+                    # Use percentile-based scaling for better visualization instead of fixed 0-250
+                    vmin = gdf[col_name].quantile(0.05)
+                    vmax = gdf[col_name].quantile(0.95)
+                    
+                    # Choose appropriate colormap based on data type
+                    if any(keyword in col_name.lower() for keyword in ['density', 'population', 'dens_']):
+                        cmap = 'YlOrRd'
+                    elif any(keyword in col_name.lower() for keyword in ['age', 'umur']):
+                        cmap = 'viridis'
+                    elif any(keyword in col_name.lower() for keyword in ['poverty', 'poor', 'miskin']):
+                        cmap = 'Reds'
+                    elif any(keyword in col_name.lower() for keyword in ['gender', 'jk_', 'kelamin']):
+                        cmap = 'RdYlBu'
+                    else:
+                        cmap = 'viridis'
+                    
+                    gdf.plot(ax=ax, column=col_name, cmap=cmap, alpha=0.7, 
+                           edgecolor='white', linewidth=0.3, legend=True,
+                           legend_kwds={'shrink': 0.7, 'aspect': 20},
+                           vmin=vmin, vmax=vmax)
+                    print(f"  🎨 Plotted {len(gdf)} polygons with dynamic scaling ({vmin:.1f}-{vmax:.1f})")
                 else:
-                    gdf.plot(ax=ax, color=color, alpha=0.7, edgecolor='white', linewidth=0.2)
+                    gdf.plot(ax=ax, color=color, alpha=0.7, edgecolor='white', linewidth=0.3)
+                    print(f"  🎨 Plotted {len(gdf)} polygons with uniform color (no variation)")
             else:
-                gdf.plot(ax=ax, color=color, alpha=0.7, edgecolor='white', linewidth=0.2)
+                gdf.plot(ax=ax, color=color, alpha=0.7, edgecolor='white', linewidth=0.3)
+                print(f"  🎨 Plotted {len(gdf)} polygons with uniform color (no numeric data)")
         else:
-            gdf.plot(ax=ax, color=color, alpha=0.7)
+            gdf.plot(ax=ax, color=color, alpha=0.8)
+            print(f"  🎨 Plotted {len(gdf)} features with default styling")
         
-        # Set equal aspect ratio
+        # Set proper geographic bounds with Jakarta context
+        ax.set_xlim(jakarta_bounds[0], jakarta_bounds[2])
+        ax.set_ylim(jakarta_bounds[1], jakarta_bounds[3])
+        
+        # Set equal aspect ratio and improve axes
         ax.set_aspect('equal', adjustable='box')
+        ax.grid(True, alpha=0.3)
+        
+        # Print data info for debugging
+        if len(gdf) > 0:
+            bounds = gdf.total_bounds
+            print(f"  📊 Data bounds: {bounds[0]:.4f}, {bounds[1]:.4f}, {bounds[2]:.4f}, {bounds[3]:.4f}")
+            print(f"  📈 Features plotted: {len(gdf)} with Jakarta context")
+        else:
+            print(f"  ⚠️  No features to plot")
     
     def _plot_raster_dataset(self, ax, dataset_info: Dict):
-        """Plot a single raster dataset."""
+        """Plot a single raster dataset with Jakarta context and proper georeferencing."""
         file_path = dataset_info['file_path']
         
-        # Read and plot raster
-        with rasterio.open(file_path) as src:
-            # Sample the data for plotting (to avoid memory issues)
-            if src.width > 2000 or src.height > 2000:
-                # Downsample large rasters
-                scale_factor = max(src.width // 2000, src.height // 2000, 1)
-                data = src.read(1, out_shape=(src.height // scale_factor, src.width // scale_factor))
-            else:
-                data = src.read(1)
+        try:
+            # Read and plot raster with proper geospatial context
+            with rasterio.open(file_path) as src:
+                # Get the CRS and transform information
+                src_crs = src.crs
+                transform = src.transform
+                bounds = src.bounds
+                
+                # Sample the data for plotting (to avoid memory issues)
+                if src.width > 2000 or src.height > 2000:
+                    # Downsample large rasters
+                    scale_factor = max(src.width // 2000, src.height // 2000, 1)
+                    data = src.read(1, out_shape=(src.height // scale_factor, src.width // scale_factor))
+                    # Adjust transform for downsampled data
+                    new_transform = rasterio.Affine(transform.a * scale_factor, transform.b, transform.c,
+                                                  transform.d, transform.e * scale_factor, transform.f)
+                else:
+                    data = src.read(1)
+                    new_transform = transform
+                
+                # Handle nodata
+                if src.nodata is not None:
+                    data = np.ma.masked_equal(data, src.nodata)
+                
+                # Determine appropriate extent for plotting
+                if src_crs and src_crs.to_string() != 'EPSG:4326':
+                    # Try to reproject bounds to WGS84 for consistent plotting
+                    try:
+                        from rasterio.warp import transform_bounds
+                        target_bounds = transform_bounds(src_crs, 'EPSG:4326', *bounds)
+                    except:
+                        target_bounds = bounds
+                else:
+                    target_bounds = bounds
+                
+                # Plot with geographic extent
+                im = ax.imshow(data, cmap='viridis', alpha=0.8, 
+                             extent=[target_bounds[0], target_bounds[2], target_bounds[1], target_bounds[3]])
+                
+                # Add Jakarta context if raster is within Jakarta bounds
+                jakarta_bounds = self._get_jakarta_bounds_with_buffer()
+                
+                # Check if raster overlaps with Jakarta
+                if (target_bounds[0] < jakarta_bounds[2] and target_bounds[2] > jakarta_bounds[0] and
+                    target_bounds[1] < jakarta_bounds[3] and target_bounds[3] > jakarta_bounds[1]):
+                    # Raster overlaps with Jakarta - add boundary context
+                    self._plot_jakarta_context(ax)
+                    
+                    # Set Jakarta bounds for consistency
+                    ax.set_xlim(jakarta_bounds[0], jakarta_bounds[2])
+                    ax.set_ylim(jakarta_bounds[1], jakarta_bounds[3])
+                else:
+                    # Raster doesn't overlap - use raster bounds
+                    ax.set_xlim(target_bounds[0], target_bounds[2])
+                    ax.set_ylim(target_bounds[1], target_bounds[3])
+                
+                # Add colorbar with better formatting
+                try:
+                    if hasattr(im, 'colorbar') or True:  # Always try to add colorbar
+                        plt.colorbar(im, ax=ax, shrink=0.8, aspect=20, 
+                                   format='%.2f' if data.max() < 100 else '%.0f')
+                except:
+                    pass  # Skip colorbar if it fails
             
-            # Handle nodata
-            if src.nodata is not None:
-                data = np.ma.masked_equal(data, src.nodata)
-            
-            # Plot with colormap
-            im = ax.imshow(data, cmap='viridis', alpha=0.8)
-            
-            # Add colorbar
-            plt.colorbar(im, ax=ax, shrink=0.8, aspect=20)
+        except Exception as e:
+            print(f"  ❌ Error plotting raster: {e}")
+            ax.text(0.5, 0.5, f"Error loading raster\n{file_path.name}\n{str(e)[:50]}...", 
+                   ha='center', va='center', transform=ax.transAxes)
         
         ax.set_aspect('equal', adjustable='box')
+        ax.set_xlabel('Longitude', fontsize=8)
+        ax.set_ylabel('Latitude', fontsize=8)
+    
+    def _create_merged_flood_visualization(self, folder_path) -> dict:
+        """Create a merged visualization of flood depth data with enhanced processing from quick_flood_fix."""
+        try:
+            from pathlib import Path
+            
+            # Find all flood depth files
+            flood_folder = Path(folder_path) / "Flood Depth"
+            if not flood_folder.exists():
+                # Try alternative paths
+                flood_files = list(Path(folder_path).glob("**/*Genangan_*.shp"))
+            else:
+                flood_files = list(flood_folder.glob("Genangan_*.shp"))
+            
+            if not flood_files:
+                print("⚠️  No flood depth files found")
+                return None
+            
+            print(f"📊 Found {len(flood_files)} flood depth files")
+            
+            # Load and merge flood data with enhanced error handling
+            all_flood_data = []
+            target_crs = 'EPSG:4326'
+            
+            for flood_file in flood_files:
+                try:
+                    gdf = gpd.read_file(flood_file)
+                    print(f"  📂 Loading {flood_file.name}: {len(gdf)} features, CRS: {gdf.crs}")
+                    
+                    # Skip if empty
+                    if len(gdf) == 0:
+                        print(f"  ⚠️  Empty file: {flood_file.name}")
+                        continue
+                    
+                    # Comprehensive CRS handling
+                    if gdf.crs is not None and str(gdf.crs) != target_crs:
+                        try:
+                            gdf = gdf.to_crs(target_crs)
+                            print(f"    🔄 Reprojected to {target_crs}")
+                        except Exception as e:
+                            print(f"    ⚠️  CRS reprojection failed: {e}")
+                            continue
+                    elif gdf.crs is None:
+                        print(f"    ⚠️  No CRS for {flood_file.name}, assuming WGS84")
+                        gdf = gdf.set_crs(target_crs)
+                    
+                    # Extract year from filename (improved extraction)
+                    year_match = [part for part in flood_file.stem.split('_') if part.isdigit()]
+                    year = year_match[-1] if year_match else flood_file.stem.split('_')[-1]  # Take last part as year
+                    gdf['year'] = year
+                    gdf['source_file'] = flood_file.name
+                    
+                    # Only keep essential columns to avoid data issues (enhanced from quick_flood_fix)
+                    essential_cols = ['year', 'source_file', 'geometry']
+                    
+                    # Check for additional useful columns
+                    for col in gdf.columns:
+                        if any(keyword in col.lower() for keyword in ['lokasi', 'wilayah', 'location', 'area']):
+                            essential_cols.append(col)
+                        elif any(keyword in col.lower() for keyword in ['tinggi', 'genangan', 'depth', 'height']):
+                            # Only include depth if it has reasonable values (improved validation)
+                            try:
+                                depth_values = gdf[col].dropna()
+                                if len(depth_values) > 0:
+                                    # Check for reasonable depth values (0-500cm is reasonable for flooding)
+                                    reasonable_depths = depth_values[
+                                        (depth_values >= 0) & (depth_values <= 500)
+                                    ]
+                                    if len(reasonable_depths) > len(depth_values) * 0.5:  # At least 50% reasonable
+                                        essential_cols.append(col)
+                                        gdf['flood_depth'] = gdf[col]
+                                        print(f"    📈 Added depth column {col} with {len(reasonable_depths)}/{len(depth_values)} reasonable values")
+                            except:
+                                pass
+                    
+                    # Create clean dataset with only essential columns
+                    available_cols = [col for col in essential_cols if col in gdf.columns]
+                    gdf_clean = gdf[available_cols].copy()
+                    
+                    # Add default flood presence if no depth column (simplified approach from quick_flood_fix)
+                    if 'flood_depth' not in gdf_clean.columns:
+                        gdf_clean['flood_depth'] = 1.0  # Default presence indicator
+                    
+                    all_flood_data.append(gdf_clean)
+                    print(f"    ✅ Added {len(gdf_clean)} flood points for year {year}")
+                    
+                except Exception as e:
+                    print(f"  ❌ Error loading {flood_file.name}: {e}")
+                    continue
+            
+            if not all_flood_data:
+                print("⚠️  No valid flood data found")
+                return None
+            
+            # Combine all data
+            print(f"  🔗 Combining {len(all_flood_data)} flood datasets...")
+            merged_flood = gpd.GeoDataFrame(pd.concat(all_flood_data, ignore_index=True))
+            
+            # Add frequency analysis by approximate location (enhanced from quick_flood_fix)
+            if len(merged_flood) > 0:
+                # Round coordinates for frequency analysis (higher precision for better grouping)
+                merged_flood['lon_round'] = merged_flood.geometry.x.round(4)
+                merged_flood['lat_round'] = merged_flood.geometry.y.round(4)
+                location_counts = merged_flood.groupby(['lon_round', 'lat_round']).size()
+                merged_flood['flood_frequency'] = merged_flood.set_index(['lon_round', 'lat_round']).index.map(location_counts)
+                
+                # Additional analysis - identify hotspots
+                hotspots = location_counts[location_counts >= 3]  # Locations flooded 3+ times
+                print(f"  🔥 Identified {len(hotspots)} flood hotspots (3+ occurrences)")
+            
+            # Create enhanced dataset info
+            numeric_columns = ['flood_depth', 'flood_frequency'] if 'flood_frequency' in merged_flood.columns else ['flood_depth']
+            
+            dataset_info = {
+                'name': 'Merged_Flood_All_Years',
+                'data': merged_flood,
+                'geometry_type': 'Point', 
+                'data_type': 'point',
+                'feature_count': len(merged_flood),
+                'columns': list(merged_flood.columns),
+                'numeric_columns': numeric_columns,
+                'crs': merged_flood.crs,
+                'bounds': merged_flood.total_bounds if len(merged_flood) > 0 else [0,0,0,0]
+            }
+            
+            print(f"  ✅ Created merged flood dataset: {len(merged_flood)} total flood points across {len(all_flood_data)} years")
+            return dataset_info
+            
+        except Exception as e:
+            print(f"❌ Error creating merged flood visualization: {e}")
+            return None
     
     def create_comprehensive_report(self):
         """Create a comprehensive report of all discovered datasets."""
