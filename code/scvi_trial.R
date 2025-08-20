@@ -70,6 +70,7 @@ popgrowth_df  <- st_read("data/extracted_data/24 Gender/socioeconomic_gender_202
   ) %>% 
   transmute(
     objectid, wadmkd,
+    pop_24,
     pop_growth = (pop_24 - pop_23) / pop_23
   )
 
@@ -232,6 +233,14 @@ all_indicators  <- nb_raw %>%
     id_kel = str_to_lower(id_kel)
   )
 
+all_indicators_stat  <- all_indicators %>% 
+  skim() %>%
+  filter(
+    skim_type == "numeric",
+    skim_variable != "id_obj"
+  ) %>% 
+  select(-starts_with("character."))
+
 all_indicators_z  <- all_indicators %>% 
   mutate(
     across(
@@ -286,6 +295,20 @@ scvi_unweight_sf <- kel_geom %>%
   mutate(id_kel = str_to_lower(id_kel)) %>% 
   left_join(
     scvi_unweighted_df,
+    by = c("id_obj","id_kel")
+  ) %>% 
+  left_join(
+    all_indicators %>% select(
+      id_obj, id_kel,
+      population_density = pop_dens24, 
+      vulnerable_employment_population = vulemp_pop, 
+      population_growth = pop_growth),
+    by = c("id_obj","id_kel")
+  ) %>% 
+  left_join(
+    popgrowth_df %>%
+      select(id_obj = objectid, id_kel = wadmkd, population = pop_24) %>% 
+      mutate(id_kel = str_to_lower(id_kel)),
     by = c("id_obj","id_kel")
   ) %>% 
   st_cast("MULTIPOLYGON") %>% 
